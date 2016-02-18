@@ -7,7 +7,6 @@ copied from https://github.com/bdarnell/tornado_http2/blob/master/tornado_http2/
 
 import time
 
-from tornado import gen
 from tornado.ioloop import IOLoop
 from tornado.options import define, options, parse_command_line, enable_pretty_logging
 
@@ -18,7 +17,7 @@ from http2 import SimpleAsyncHTTP2Client
 enable_pretty_logging()
 
 define('n', help='number of queries', default=1000)
-define('h', help='host', default='h2o.examp1e.net')
+define('h', help='host', default='http2.akamai.com')
 define('p', help='port', default=None, type=int)
 define('s', help='use https, [1|0]', default=True)
 define('c', help='max streams concurrency', default=30)

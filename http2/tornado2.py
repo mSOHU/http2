@@ -20,12 +20,24 @@ import h2.connection
 import h2.exceptions
 from tornado import (
     httputil, stack_context, iostream,
-    simple_httpclient, netutil,
+    simple_httpclient,
 )
 from tornado.escape import _unicode, utf8
 from tornado.httpclient import (
     HTTPResponse, HTTPError, HTTPRequest
 )
+
+
+if hasattr(ssl, 'match_hostname') and hasattr(ssl, 'CertificateError'):  # python 3.2+
+    ssl_match_hostname = ssl.match_hostname
+    SSLCertificateError = ssl.CertificateError
+elif ssl is None:
+    ssl_match_hostname = SSLCertificateError = None
+else:
+    import backports.ssl_match_hostname
+    ssl_match_hostname = backports.ssl_match_hostname.match_hostname
+    SSLCertificateError = backports.ssl_match_hostname.CertificateError
+
 
 logger = logging.getLogger(__name__)
 ResponseStartLine = collections.namedtuple(
@@ -241,6 +253,10 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
 
 class _SSLIOStream(iostream.SSLIOStream):
+    def __init__(self, *args, **kwargs):
+        self.hostname = kwargs.pop('hostname')
+        super(_SSLIOStream, self).__init__(*args, **kwargs)
+
     def _handle_connect(self):
         # When the connection is complete, wrap the socket for SSL
         # traffic.  Note that we do this by overriding _handle_connect
@@ -250,7 +266,7 @@ class _SSLIOStream(iostream.SSLIOStream):
         # followed by _handle_write we need this to be synchronous.
         self.socket = self.ssl_wrap_socket(
             self.socket, self._ssl_options,
-            # server_hostname=,
+            server_hostname=self.hostname,
             server_side=False,
             do_handshake_on_connect=False
         )
@@ -337,9 +353,11 @@ class _HTTP2ConnectionFactory(object):
             if self.secure:
                 io_stream = _SSLIOStream(
                     socket.socket(af, sock_type, proto),
+                    hostname=self.host,
                     io_loop=self.io_loop,
                     ssl_options=self.ssl_options,
-                    max_buffer_size=self.max_buffer_size)
+                    max_buffer_size=self.max_buffer_size
+                )
             else:
                 io_stream = iostream.IOStream(
                     socket.socket(af, sock_type, proto),
@@ -377,9 +395,37 @@ class _HTTP2ConnectionFactory(object):
         return ssl_options
 
     def _on_connect(self, io_stream, ready_callback, close_callback):
+        if not self._verify_cert(io_stream.socket.getpeercert()):
+            io_stream.close()
+            return
+
         io_stream.set_close_callback(lambda: close_callback(io_stream, io_stream.error))
         self.io_loop.add_callback(functools.partial(ready_callback, io_stream))
         io_stream.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+    def _verify_cert(self, peer_cert):
+        """Returns True if peercert is valid according to the configured
+        validation mode and hostname.
+
+        The ssl handshake already tested the certificate for a valid
+        CA signature; the only thing that remains is to check
+        the hostname.
+        """
+        verify_mode = self.ssl_options.verify_mode
+        assert verify_mode in (ssl.CERT_NONE, ssl.CERT_REQUIRED, ssl.CERT_OPTIONAL)
+        if verify_mode == ssl.CERT_NONE or self.host is None:
+            return True
+
+        if peer_cert is None and verify_mode == ssl.CERT_REQUIRED:
+            logger.warning("No SSL certificate given")
+            return False
+        try:
+            ssl_match_hostname(peer_cert, self.host)
+        except SSLCertificateError:
+            logger.warning("Invalid SSL certificate", exc_info=True)
+            return False
+        else:
+            return True
 
 
 class _HTTP2ConnectionContext(object):
