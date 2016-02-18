@@ -29,7 +29,7 @@ def benchmark():
     client = SimpleAsyncHTTP2Client(
         host=options.h, port=options.p,
         secure=options.s, max_streams=30,
-        connect_timeout=5, enable_push=True
+        connect_timeout=5, enable_push=False
     )
 
     start = time.time()
