@@ -638,9 +638,12 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             self.chunks.append(chunk)
 
     def handle_exception(self, typ, value, tb):
-        if isinstance(value, _RequestTimeout) and self._stream_ended:
-            self.finish()
-            return True
+        if isinstance(value, _RequestTimeout):
+            if self._stream_ended:
+                self.finish()
+                return True
+            else:
+                value = HTTPError(599, "Timeout")
 
         self._remove_timeout()
         self._unregister_unfinished_streams()
