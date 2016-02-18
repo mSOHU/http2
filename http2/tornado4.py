@@ -37,7 +37,10 @@ class HTTP2Response(HTTPResponse):
     def __init__(self, *args, **kwargs):
         self.pushed_responses = kwargs.pop('pushed_responses', [])
         self.new_request = kwargs.pop('new_request', None)
+
         super(HTTP2Response, self).__init__(*args, **kwargs)
+        reason = kwargs.pop('reason', None)
+        self.reason = reason or httputil.responses.get(self.code, "Unknown")
 
 
 class HTTP2Error(HTTPError):
@@ -141,8 +144,10 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
                 reason, self.next_connect_time - now_time)
 
         self.io_loop.add_timeout(
-            self.next_connect_time, self.connection_factory.make_connection,
-            self._on_connection_ready, self._on_connection_close)
+            self.next_connect_time, functools.partial(
+                self.connection_factory.make_connection,
+                self._on_connection_ready, self._on_connection_close
+            ))
 
         # move active request to pending
         for key, (request, callback) in self.active.items():
@@ -270,7 +275,7 @@ class _HTTP2ConnectionFactory(object):
 
     def _on_connect(self, io_stream, ready_callback, close_callback):
         io_stream.set_close_callback(lambda: close_callback(io_stream, io_stream.error))
-        self.io_loop.add_callback(ready_callback, io_stream)
+        self.io_loop.add_callback(functools.partial(ready_callback, io_stream))
         io_stream.set_nodelay(True)
 
 
@@ -436,6 +441,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._finalized = False
 
         with stack_context.ExceptionStackContext(self.handle_exception):
+            self.request = request
             if request.request_timeout:
                 self._timeout = self.io_loop.add_timeout(
                     self.start_time + request.request_timeout,
@@ -572,7 +578,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
 
         if self.release_callback is not None:
             self.release_callback()
-        self.io_loop.add_callback(self.final_callback, response)
+        self.io_loop.add_callback(functools.partial(self.final_callback, response))
         self._finalized = True
 
     def handle_event(self, event):
@@ -659,10 +665,12 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
 
         self._remove_timeout()
         self._unregister_unfinished_streams()
-        self.context.remove_stream_delegate(self.stream_id)
+        if hasattr(self, 'stream_id'):
+            self.context.remove_stream_delegate(self.stream_id)
 
-        # TODO: should we reset & flush immediately?
-        self.context.reset_stream(self.stream_id, flush=True)
+            # TODO: should we reset & flush immediately?
+            self.context.reset_stream(self.stream_id, flush=True)
+
         response = HTTP2Response(
             self.request, 599, error=value,
             request_time=time.time() - self.start_time,
