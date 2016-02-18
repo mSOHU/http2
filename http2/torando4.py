@@ -246,27 +246,11 @@ class _HTTP2ConnectionFactory(object):
         if cert_options['client_cert'] is not None:
             ssl_options["certfile"] = cert_options['client_cert']
 
-        # SSL interoperability is tricky.  We want to disable
-        # SSLv2 for security reasons; it wasn't disabled by default
-        # until openssl 1.0.  The best way to do this is to use
-        # the SSL_OP_NO_SSLv2, but that wasn't exposed to python
-        # until 3.2.  Python 2.7 adds the ciphers argument, which
-        # can also be used to disable SSLv2.  As a last resort
-        # on python 2.6, we set ssl_version to TLSv1.  This is
-        # more narrow than we'd like since it also breaks
-        # compatibility with servers configured for SSLv3 only,
-        # but nearly all servers support both SSLv3 and TLSv1:
-        # http://blog.ivanristic.com/2011/09/ssl-survey-protocol-support.html
-        if sys.version_info >= (2, 7):
-            # In addition to disabling SSLv2, we also exclude certain
-            # classes of insecure ciphers.
-            ssl_options["ciphers"] = "DEFAULT:!SSLv2:!EXPORT:!DES"
-        else:
-            # This is really only necessary for pre-1.0 versions
-            # of openssl, but python 2.6 doesn't expose version
-            # information.
-            ssl_options["ssl_version"] = ssl.PROTOCOL_TLSv1
-
+        # according to REC 7540:
+        # deployments of HTTP/2 that use TLS 1.2 MUST
+        # support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        ssl_options["ciphers"] = "ECDH+AESGCM"
+        ssl_options["ssl_version"] = ssl.PROTOCOL_TLSv1_2
         ssl_options = netutil.ssl_options_to_context(ssl_options)
         ssl_options.set_alpn_protocols(['h2'])
         return ssl_options
