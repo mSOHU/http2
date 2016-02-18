@@ -60,6 +60,18 @@ class _RequestTimeout(Exception):
 
 class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
     MAX_CONNECTION_BACKOFF = 10
+    CLIENT_REGISTRY = {}
+
+    def __new__(cls, *args, **kwargs):
+        force_instance = kwargs.get('force_instance')
+        host = kwargs['host']
+        if force_instance or host not in cls.CLIENT_REGISTRY:
+            client = simple_httpclient.SimpleAsyncHTTPClient.__new__(cls, *args, force_instance=True, **kwargs)
+            cls.CLIENT_REGISTRY.setdefault(host, client)
+        else:
+            client = cls.CLIENT_REGISTRY[host]
+
+        return client
 
     def initialize(self, io_loop, host, port=None, max_streams=200,
                    hostname_mapping=None, max_buffer_size=104857600,
