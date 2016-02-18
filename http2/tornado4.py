@@ -4,6 +4,7 @@ import io
 import ssl
 import sys
 import copy
+import time
 import base64
 import socket
 import httplib
@@ -125,7 +126,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         self.connection_backoff = min(
             self.connection_backoff + 1, self.MAX_CONNECTION_BACKOFF)
-        now_time = self.io_loop.time()
+        now_time = time.time()
         self.next_connect_time = max(
             self.next_connect_time,
             now_time + self.connection_backoff)
@@ -155,7 +156,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
     def _on_connection_ready(self, io_stream):
         # back-off
-        self.next_connect_time = max(self.io_loop.time(), self.next_connect_time)
+        self.next_connect_time = max(time.time(), self.next_connect_time)
         self.connection_backoff = 0
 
         self.io_stream = io_stream
@@ -188,7 +189,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 class _HTTP2ConnectionFactory(object):
     def __init__(self, io_loop, host, port, max_buffer_size, tcp_client,
                  secure=True, cert_options=None, connect_timeout=None):
-        self.start_time = io_loop.time()
+        self.start_time = time.time()
         self.io_loop = io_loop
         self.max_buffer_size = max_buffer_size
         self.tcp_client = tcp_client
@@ -204,13 +205,13 @@ class _HTTP2ConnectionFactory(object):
     def make_connection(self, ready_callback, close_callback):
         if self.connect_timeout:
             timed_out = [False]
-            start_time = self.io_loop.time()
+            start_time = time.time()
 
             def _on_timeout():
                 timed_out[0] = True
                 close_callback(
                     io_stream=None,
-                    reason=HTTP2ConnectionTimeout(self.io_loop.time() - start_time)
+                    reason=HTTP2ConnectionTimeout(time.time() - start_time)
                 )
 
             def _on_connect(io_stream):
@@ -417,7 +418,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
     def __init__(
             self, io_loop, context, request, default_host=None,
             release_callback=None, final_callback=None, stream_id=None):
-        self.start_time = io_loop.time()
+        self.start_time = time.time()
         self.io_loop = io_loop
         self.context = context
         self.release_callback = release_callback
@@ -635,7 +636,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             buff = io.BytesIO(data)  # TODO: don't require one big string?
         response = HTTP2Response(
             original_request, self.code, reason=self.reason,
-            headers=self.headers, request_time=self.io_loop.time() - self.start_time,
+            headers=self.headers, request_time=time.time() - self.start_time,
             buffer=buff, effective_url=self.request.url,
             pushed_responses=self._pushed_responses.values(),
             new_request=new_request,
@@ -664,7 +665,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self.context.reset_stream(self.stream_id, flush=True)
         response = HTTP2Response(
             self.request, 599, error=value,
-            request_time=self.io_loop.time() - self.start_time,
+            request_time=time.time() - self.start_time,
         )
         self._run_callback(response)
         return True
