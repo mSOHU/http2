@@ -312,7 +312,6 @@ class _HTTP2ConnectionContext(object):
         try:
             events = self.h2_conn.receive_data(data)
         except h2.exceptions.ProtocolError as err:
-            self.h2_conn.close_connection(h2.errors.PROTOCOL_ERROR)
             self._flush_to_stream()
             self.io_stream.close()
             self.on_connection_close(err)
