@@ -26,7 +26,7 @@ from tornado.httpclient import (
     HTTPResponse, HTTPError, HTTPRequest, _RequestProxy
 )
 
-
+logger = log.gen_log
 __all__ = [
     'HTTP2Response', 'HTTP2Error', 'HTTP2ConnectionTimeout',
     'HTTP2ConnectionClosed', 'SimpleAsyncHTTP2Client',
@@ -106,7 +106,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             self._on_connection_ready, self._on_connection_close)
 
     def _adjust_settings(self, event):
-        log.gen_log.debug('settings updated: %r', event.changed_settings)
+        logger.debug('settings updated: %r', event.changed_settings)
         settings = event.changed_settings.get(h2.settings.MAX_CONCURRENT_STREAMS)
         if settings:
             self.max_clients = min(settings.new_value, self.max_streams)
@@ -132,11 +132,11 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             now_time + self.connection_backoff)
 
         if io_stream is None:
-            log.gen_log.info(
+            logger.info(
                 'Connection to %s failed due: %r. Reconnect in %.2f seconds',
                 self.host, reason, self.next_connect_time - now_time)
         else:
-            log.gen_log.info(
+            logger.info(
                 'Connection closed due: %r. Reconnect in %.2f seconds',
                 reason, self.next_connect_time - now_time)
 
@@ -388,7 +388,7 @@ class _HTTP2ConnectionContext(object):
                         stream_delegate.handle_event(event)
                 else:
                     self.reset_stream(stream_id)
-                    log.gen_log.warning('unexpected stream: %s, event: %r', stream_id, event)
+                    logger.warning('unexpected stream: %s, event: %r', stream_id, event)
 
                 continue
 
@@ -397,11 +397,11 @@ class _HTTP2ConnectionContext(object):
                 try:
                     self.event_handlers[event_type](event)
                 except Exception as err:
-                    log.gen_log.exception('Exception while handling event: %r', err)
+                    logger.exception('Exception while handling event: %r', err)
 
                 continue
 
-            log.gen_log.debug('ignored event: %r, %r', event, event.__dict__)
+            logger.debug('ignored event: %r, %r', event, event.__dict__)
 
     def _setup_reading(self, *_):
         if self.is_closed:
@@ -594,7 +594,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             stream = self.from_push_stream(event)
             self._pushed_streams[event.pushed_stream_id] = stream
         else:
-            log.gen_log.warning('ignored event: %r, %r', event, event.__dict__)
+            logger.warning('ignored event: %r, %r', event, event.__dict__)
 
     def finish(self):
         self._remove_timeout()
