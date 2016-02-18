@@ -5,6 +5,5 @@ try:
 except ImportError:
     pass
 else:
-    if version_info[0] >= 4:
-        from http2.torando4 import *
-
+    if version_info[0] == 4:
+        from http2.tornado4 import *
