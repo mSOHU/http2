@@ -7,13 +7,15 @@ copied from https://github.com/bdarnell/tornado_http2/blob/master/tornado_http2/
 
 import time
 
-from tornado import gen
+from tornado import gen, log
 from tornado.ioloop import IOLoop
 from tornado.options import define, options, parse_command_line
 
 
 from http2 import SimpleAsyncHTTP2Client
 
+
+log.enable_pretty_logging()
 
 define('n', help='number of queries', default=1000)
 define('h', help='host', default='http2.akamai.com')
@@ -26,7 +28,7 @@ define('c', help='max streams concurrency', default=20)
 def benchmark():
     client = SimpleAsyncHTTP2Client(
         host=options.h, port=options.p,
-        secure=options.s, max_streams=10,
+        secure=options.s, max_streams=30,
         connect_timeout=5, enable_push=True
     )
 
