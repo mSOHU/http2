@@ -38,6 +38,17 @@ else:
     ssl_match_hostname = backports.ssl_match_hostname.match_hostname
     SSLCertificateError = backports.ssl_match_hostname.CertificateError
 
+try:
+    import certifi
+except ImportError:
+    certifi = None
+
+
+def _default_ca_certs():
+    if certifi is None:
+        raise Exception("The 'certifi' package is required to use https "
+                        "in SimpleAsyncHTTP2Client")
+    return certifi.where()
 
 logger = logging.getLogger(__name__)
 ResponseStartLine = collections.namedtuple(
@@ -379,7 +390,7 @@ class _HTTP2ConnectionFactory(object):
         if cert_options['ca_certs'] is not None:
             ssl_options["ca_certs"] = cert_options['ca_certs']
         else:
-            ssl_options["ca_certs"] = simple_httpclient._DEFAULT_CA_CERTS
+            ssl_options["ca_certs"] = _default_ca_certs()
         if cert_options['client_key'] is not None:
             ssl_options["keyfile"] = cert_options['client_key']
         if cert_options['client_cert'] is not None:

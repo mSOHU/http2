@@ -43,6 +43,8 @@ Dependencies
 - h2==2.1.0
 - tornado>=4.0 or tornado==2.4.1
 - CPython>=2.7.10 (not required for h2c, as secure=False)
+- certifi for tornado==2.4.1
+- backports.ssl_match_hostname for tornado==2.4.1
 
 
 Example Usage
