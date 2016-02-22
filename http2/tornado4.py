@@ -67,7 +67,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
     CLIENT_REGISTRY = {}
 
     def __new__(cls, *args, **kwargs):
-        force_instance = kwargs.get('force_instance')
+        force_instance = kwargs.pop('force_instance', False)
         host = kwargs['host']
         if force_instance or host not in cls.CLIENT_REGISTRY:
             client = simple_httpclient.SimpleAsyncHTTPClient.__new__(cls, *args, force_instance=True, **kwargs)
