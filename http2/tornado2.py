@@ -145,6 +145,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
                    hostname_mapping=None, max_buffer_size=104857600,
                    resolver=None, defaults=None, secure=True,
                    cert_options=None, enable_push=False, **conn_kwargs):
+        # initially, we disables stream multiplexing and wait the settings frame
         super(SimpleAsyncHTTP2Client, self).initialize(
             io_loop=io_loop, max_clients=1,
             hostname_mapping=hostname_mapping, max_buffer_size=max_buffer_size,
