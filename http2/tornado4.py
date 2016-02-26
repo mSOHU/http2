@@ -22,6 +22,7 @@ from tornado import (
     simple_httpclient, netutil
 )
 from tornado.escape import _unicode, utf8
+from tornado.util import GzipDecompressor
 from tornado.httpclient import (
     HTTPResponse, HTTPError, HTTPRequest, _RequestProxy
 )
@@ -441,8 +442,10 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._stream_ended = False
         self._finalized = False
 
+        self.request = request
         with stack_context.ExceptionStackContext(self.handle_exception):
-            self.request = request
+            self._decompressor = GzipDecompressor() if request.decompress_response else None
+
             if request.request_timeout:
                 self._timeout = self.io_loop.add_timeout(
                     self.start_time + request.request_timeout,
@@ -552,8 +555,8 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         if (request.method == "POST" and
                 "Content-Type" not in request.headers):
             request.headers["Content-Type"] = "application/x-www-form-urlencoded"
-        # if request.decompress_response:
-        #     request.headers["Accept-Encoding"] = "gzip"
+        if request.decompress_response:
+            request.headers["Accept-Encoding"] = "gzip"
 
         request.url = (
             (parsed.path or '/') +
@@ -607,6 +610,9 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._remove_timeout()
         self._unregister_unfinished_streams()
 
+        if self._decompressor:
+            self._data_received(self._decompressor.flush())
+
         data = b''.join(self.chunks)
         original_request = getattr(self.request, "original_request",
                                    self.request)
@@ -650,11 +656,21 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         )
         self._run_callback(response)
 
-    def data_received(self, chunk):
+    def _data_received(self, chunk):
         if self.request.streaming_callback is not None:
             self.request.streaming_callback(chunk)
         else:
             self.chunks.append(chunk)
+
+    def data_received(self, chunk):
+        if self._decompressor:
+            compressed_data = chunk
+            decompressed = self._decompressor.decompress(
+                compressed_data)
+            if decompressed:
+                self._data_received(decompressed)
+        else:
+            self._data_received(chunk)
 
     def handle_exception(self, typ, value, tb):
         if isinstance(value, _RequestTimeout):

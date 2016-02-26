@@ -5,6 +5,7 @@ import ssl
 import sys
 import copy
 import time
+import zlib
 import base64
 import socket
 import httplib
@@ -124,6 +125,46 @@ def ssl_options_to_context(ssl_options):
         # This constant wasn't added until python 3.3.
         context.options |= ssl.OP_NO_COMPRESSION
     return context
+
+
+class GzipDecompressor(object):
+    """Streaming gzip decompressor.
+
+    The interface is like that of `zlib.decompressobj` (without some of the
+    optional arguments, but it understands gzip headers and checksums.
+    """
+    def __init__(self):
+        # Magic parameter makes zlib module understand gzip header
+        # http://stackoverflow.com/questions/1838699/how-can-i-decompress-a-gzip-stream-with-zlib
+        # This works on cpython and pypy, but not jython.
+        self.decompressobj = zlib.decompressobj(16 + zlib.MAX_WBITS)
+
+    def decompress(self, value, max_length=None):
+        """Decompress a chunk, returning newly-available data.
+
+        Some data may be buffered for later processing; `flush` must
+        be called when there is no more input data to ensure that
+        all data was processed.
+
+        If ``max_length`` is given, some input data may be left over
+        in ``unconsumed_tail``; you must retrieve this value and pass
+        it back to a future call to `decompress` if it is not empty.
+        """
+        return self.decompressobj.decompress(value, max_length)
+
+    @property
+    def unconsumed_tail(self):
+        """Returns the unconsumed portion left over
+        """
+        return self.decompressobj.unconsumed_tail
+
+    def flush(self):
+        """Return any remaining buffered data not yet returned by decompress.
+
+        Also checks for errors such as truncated input.
+        No other methods may be called on this object after `flush`.
+        """
+        return self.decompressobj.flush()
 
 
 class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
@@ -601,7 +642,10 @@ class _HTTP2Stream(object):
         self._stream_ended = False
         self._finalized = False
 
+        self.request = request
         with stack_context.ExceptionStackContext(self.handle_exception):
+            self._decompressor = GzipDecompressor() if request.use_gzip else None
+
             if request.request_timeout:
                 self._timeout = self.io_loop.add_timeout(
                     self.start_time + request.request_timeout,
@@ -710,8 +754,8 @@ class _HTTP2Stream(object):
         if (request.method == "POST" and
                 "Content-Type" not in request.headers):
             request.headers["Content-Type"] = "application/x-www-form-urlencoded"
-        # if request.decompress_response:
-        #     request.headers["Accept-Encoding"] = "gzip"
+        if request.use_gzip:
+            request.headers["Accept-Encoding"] = "gzip"
 
         request.url = (
             (parsed.path or '/') +
@@ -765,6 +809,9 @@ class _HTTP2Stream(object):
         self._remove_timeout()
         self._unregister_unfinished_streams()
 
+        if self._decompressor:
+            self._data_received(self._decompressor.flush())
+
         data = b''.join(self.chunks)
         original_request = getattr(self.request, "original_request",
                                    self.request)
@@ -807,11 +854,24 @@ class _HTTP2Stream(object):
         )
         self._run_callback(response)
 
-    def data_received(self, chunk):
+    def _data_received(self, chunk):
         if self.request.streaming_callback is not None:
             self.request.streaming_callback(chunk)
         else:
             self.chunks.append(chunk)
+
+    def data_received(self, chunk):
+        if self._decompressor:
+            compressed_data = chunk
+            while compressed_data:
+                decompressed = self._decompressor.decompress(
+                    compressed_data, 65536)
+                if decompressed:
+                    self._data_received(decompressed)
+
+                compressed_data = self._decompressor.unconsumed_tail
+        else:
+            self._data_received(chunk)
 
     def handle_exception(self, typ, value, tb):
         if isinstance(value, _RequestTimeout):

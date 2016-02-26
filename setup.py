@@ -8,7 +8,7 @@ except ImportError:
 
 setup(
     name='http2',
-    version='0.1.0',
+    version='0.2.0',
     description="HTTP/2 client with hyper-h2 for tornado",
     author="boyxuper",
     author_email='boyxuper@gmail.com',
