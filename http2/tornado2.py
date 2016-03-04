@@ -658,11 +658,10 @@ class _HTTP2Stream(object):
         self._pushed_responses = {}
         self._stream_ended = False
         self._finalized = False
+        self._decompressor = None
 
         self.request = request
         with stack_context.ExceptionStackContext(self.handle_exception):
-            self._decompressor = GzipDecompressor() if request.use_gzip else None
-
             if request.request_timeout:
                 self._timeout = self.io_loop.add_timeout(
                     self.start_time + request.request_timeout,
@@ -781,6 +780,16 @@ class _HTTP2Stream(object):
         return request
 
     def headers_received(self, first_line, headers):
+        if self.request.use_gzip \
+                and headers.get("Content-Encoding") == "gzip":
+            self._decompressor = GzipDecompressor()
+
+            # Downstream delegates will only see uncompressed data,
+            # so rename the content-encoding header.
+            headers.add("X-Consumed-Content-Encoding",
+                        headers["Content-Encoding"])
+            del headers["Content-Encoding"]
+
         self.headers = headers
         self.code = first_line.code
         self.reason = first_line.reason
