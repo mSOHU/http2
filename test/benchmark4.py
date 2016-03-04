@@ -28,7 +28,7 @@ define('c', help='max streams concurrency', default=20)
 def benchmark():
     client = SimpleAsyncHTTP2Client(
         host=options.h, port=options.p,
-        secure=options.s, max_streams=30,
+        secure=options.s, max_streams=options.c,
         connect_timeout=5, enable_push=False
     )
 
