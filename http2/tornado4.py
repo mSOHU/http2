@@ -376,11 +376,11 @@ class _HTTP2ConnectionContext(object):
                 self._flush_to_stream()
 
     def _process_events(self, events):
+        stream_inbounds = collections.defaultdict(int)
+
         for event in events:
             if isinstance(event, h2.events.DataReceived):
-                if event.flow_controlled_length:
-                    self.h2_conn.increment_flow_control_window(
-                        event.flow_controlled_length)
+                stream_inbounds[event.stream_id] += event.flow_controlled_length
 
             if isinstance(event, h2.events.PushedStreamReceived):
                 stream_id = event.parent_stream_id
@@ -409,6 +409,23 @@ class _HTTP2ConnectionContext(object):
                 continue
 
             logger.debug('ignored event: %r, %r', event, event.__dict__)
+
+        # collects all inbound lengths, reducing the count of WindowUpdate frames.
+        connection_inbound = 0
+        for stream_id, stream_inbound in stream_inbounds.items():
+            if not stream_inbound:
+                continue
+
+            connection_inbound += stream_inbound
+            try:
+                self.h2_conn.increment_flow_control_window(stream_inbound, stream_id)
+            except (h2.exceptions.StreamClosedError, KeyError):
+                # we can simply ignore StreamClosedError because closed streams
+                # doesn't requires WindowUpdate
+                pass
+
+        if connection_inbound:
+            self.h2_conn.increment_flow_control_window(connection_inbound)
 
     def _setup_reading(self, *_):
         if self.is_closed:
