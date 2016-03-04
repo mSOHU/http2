@@ -513,21 +513,28 @@ class _HTTP2ConnectionContext(object):
 
     # h2 related
     def _on_connection_streaming(self, data):
-        """flush h2 connection data to IOStream"""
+        """handles streaming data"""
         if self.is_closed:
             return
 
         try:
             events = self.h2_conn.receive_data(data)
         except h2.exceptions.ProtocolError as err:
-            self._flush_to_stream()
-            self.io_stream.close()
-            self.on_connection_close(err)
+            try:
+                self._flush_to_stream()
+            finally:
+                self.io_stream.close()
+                self.on_connection_close(err)
             return
 
         if events:
-            self._process_events(events)
-            self._flush_to_stream()
+            try:
+                self._process_events(events)
+            except Exception as err:
+                self.io_stream.close()
+                self.on_connection_close(err)
+            else:
+                self._flush_to_stream()
 
     def _flush_to_stream(self):
         """flush h2 connection data to IOStream"""
@@ -899,13 +906,13 @@ class _HTTP2Stream(object):
         else:
             self._data_received(chunk)
 
-    def handle_exception(self, typ, value, tb):
-        if isinstance(value, _RequestTimeout):
+    def handle_exception(self, typ, error, tb):
+        if isinstance(error, _RequestTimeout):
             if self._stream_ended:
                 self.finish()
                 return True
             else:
-                value = HTTPError(599, "Timeout")
+                error = HTTPError(599, "Timeout")
 
         self._remove_timeout()
         self._unregister_unfinished_streams()
@@ -916,7 +923,7 @@ class _HTTP2Stream(object):
             self.context.reset_stream(self.stream_id, flush=True)
 
         response = HTTP2Response(
-            self.request, 599, error=value,
+            self.request, 599, error=error,
             request_time=time.time() - self.start_time,
         )
         self._run_callback(response)
