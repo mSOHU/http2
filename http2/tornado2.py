@@ -448,9 +448,10 @@ class _HTTP2ConnectionFactory(object):
         return ssl_options
 
     def _on_connect(self, io_stream, ready_callback, close_callback):
-        if not self._verify_cert(io_stream.socket.getpeercert()):
-            io_stream.close()
-            return
+        if self.secure:
+            if not self._verify_cert(io_stream.socket.getpeercert()):
+                io_stream.close()
+                return
 
         io_stream.set_close_callback(lambda: close_callback(io_stream, io_stream.error))
         self.io_loop.add_callback(functools.partial(ready_callback, io_stream))
