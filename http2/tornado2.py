@@ -242,12 +242,12 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         if io_stream is None:
             logger.info(
-                'Connection to %s failed due: %r. Reconnect in %.2f seconds',
-                self.host, reason, self.next_connect_time - now_time)
+                'Connection to %s:%u failed due: %r. Reconnect in %.2f seconds',
+                self.host, self.port, reason, self.next_connect_time - now_time)
         else:
             logger.info(
-                'Connection closed due: %r. Reconnect in %.2f seconds',
-                reason, self.next_connect_time - now_time)
+                'Connection to %s:%u closed due: %r. Reconnect in %.2f seconds',
+                self.host, self.port, reason, self.next_connect_time - now_time)
 
         self.io_loop.add_timeout(
             self.next_connect_time, functools.partial(
