@@ -320,24 +320,24 @@ class _HTTP2ConnectionContext(object):
 
         try:
             events = self.h2_conn.receive_data(data)
-        except h2.exceptions.ProtocolError as err:
+        except Exception as err:
             try:
-                self._flush_to_stream()
+                if isinstance(err, h2.exceptions.ProtocolError):
+                    self._flush_to_stream()
+                self.io_stream.close()
             finally:
-                # import traceback; traceback.print_exc()
-                self.io_stream.close(exc_info=True)
                 self.on_connection_close(err)
             return
 
         if events:
             try:
                 self._process_events(events)
-            except Exception as err:
-                # import traceback; traceback.print_exc()
-                self.io_stream.close(exc_info=True)
-                self.on_connection_close(err)
-            else:
                 self._flush_to_stream()
+            except Exception as err:
+                try:
+                    self.io_stream.close()
+                finally:
+                    self.on_connection_close(err)
 
     def _flush_to_stream(self):
         """flush h2 connection data to IOStream"""
