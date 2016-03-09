@@ -232,6 +232,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         if connection is not None:
             connection.on_connection_close(io_stream.error)
 
+        # schedule back-off
         self.connection_backoff = min(
             self.connection_backoff + 1, self.MAX_CONNECTION_BACKOFF)
         now_time = time.time()
@@ -262,10 +263,10 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
     def _connection_terminated(self, event):
         self._on_connection_close(
-            'Server requested: ERR 0x%x' % event.error_code, self.io_stream)
+            self.io_stream, 'Server requested, code: 0x%x' % event.error_code)
 
     def _on_connection_ready(self, io_stream):
-        # back-off
+        # reset back-off
         self.next_connect_time = max(time.time(), self.next_connect_time)
         self.connection_backoff = 0
 
