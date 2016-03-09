@@ -129,6 +129,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         if connection is not None:
             connection.on_connection_close(io_stream.error)
 
+        # schedule back-off
         self.connection_backoff = min(
             self.connection_backoff + 1, self.MAX_CONNECTION_BACKOFF)
         now_time = time.time()
@@ -138,12 +139,12 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         if io_stream is None:
             logger.info(
-                'Connection to %s failed due: %r. Reconnect in %.2f seconds',
-                self.host, reason, self.next_connect_time - now_time)
+                'Connection to %s:%u failed due: %r. Reconnect in %.2f seconds',
+                self.host, self.port, reason, self.next_connect_time - now_time)
         else:
             logger.info(
-                'Connection closed due: %r. Reconnect in %.2f seconds',
-                reason, self.next_connect_time - now_time)
+                'Connection to %s:%u closed due: %r. Reconnect in %.2f seconds',
+                self.host, self.port, reason, self.next_connect_time - now_time)
 
         self.io_loop.add_timeout(
             self.next_connect_time, functools.partial(
@@ -159,10 +160,10 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
     def _connection_terminated(self, event):
         self._on_connection_close(
-            'Server requested: ERR 0x%x' % event.error_code, self.io_stream)
+            self.io_stream, 'Server requested, code: 0x%x' % event.error_code)
 
     def _on_connection_ready(self, io_stream):
-        # back-off
+        # reset back-off
         self.next_connect_time = max(time.time(), self.next_connect_time)
         self.connection_backoff = 0
 
@@ -319,24 +320,24 @@ class _HTTP2ConnectionContext(object):
 
         try:
             events = self.h2_conn.receive_data(data)
-        except h2.exceptions.ProtocolError as err:
+        except Exception as err:
             try:
-                self._flush_to_stream()
+                if isinstance(err, h2.exceptions.ProtocolError):
+                    self._flush_to_stream()
+                self.io_stream.close()
             finally:
-                # import traceback; traceback.print_exc()
-                self.io_stream.close(exc_info=True)
                 self.on_connection_close(err)
             return
 
         if events:
             try:
                 self._process_events(events)
-            except Exception as err:
-                # import traceback; traceback.print_exc()
-                self.io_stream.close(exc_info=True)
-                self.on_connection_close(err)
-            else:
                 self._flush_to_stream()
+            except Exception as err:
+                try:
+                    self.io_stream.close()
+                finally:
+                    self.on_connection_close(err)
 
     def _flush_to_stream(self):
         """flush h2 connection data to IOStream"""

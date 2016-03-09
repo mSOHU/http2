@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import re
+
 
 try:
     from setuptools import setup
@@ -6,9 +10,20 @@ except ImportError:
     from distutils.core import setup
 
 
+# Get the version
+version_regex = r'__version__ = ["\']([^"\']*)["\']'
+with open('http2/__init__.py', 'r') as f:
+    text = f.read()
+    match = re.search(version_regex, text)
+
+    if match:
+        version = match.group(1)
+    else:
+        raise RuntimeError("No version number found!")
+
 setup(
     name='http2',
-    version='0.2.1',
+    version=version,
     description="HTTP/2 client with hyper-h2 for tornado",
     author="boyxuper",
     author_email='boyxuper@gmail.com',
@@ -22,6 +37,7 @@ setup(
     install_requires=[
         'h2>=2.1.0',
         'tornado>=2.4.1',
+        'backports.ssl_match_hostname',
     ],
     license="Apache Software License",
     zip_safe=False,
