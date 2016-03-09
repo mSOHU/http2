@@ -2,6 +2,8 @@
 
 import sys
 
+__version__ = '0.2.2'
+
 
 # patch struct.unpack to accept memoryview object
 # for python < 2.7.5
