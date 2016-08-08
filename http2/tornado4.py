@@ -701,8 +701,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
     def data_received(self, chunk):
         if self._decompressor:
             compressed_data = chunk
-            decompressed = self._decompressor.decompress(
-                compressed_data, 65536)
+            decompressed = self._decompressor.decompress(compressed_data, 0)
             if decompressed:
                 self._data_received(decompressed)
         else:

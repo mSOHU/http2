@@ -901,8 +901,7 @@ class _HTTP2Stream(object):
         if self._decompressor:
             compressed_data = chunk
             while compressed_data:
-                decompressed = self._decompressor.decompress(
-                    compressed_data, 65536)
+                decompressed = self._decompressor.decompress(compressed_data, 0)
                 if decompressed:
                     self._data_received(decompressed)
 
