@@ -386,8 +386,7 @@ class _HTTP2ConnectionFactory(object):
                 self._on_connect(_stream, ready_callback, close_callback)
 
             timeout_handle = self.io_loop.add_timeout(
-                self.start_time + self.connect_timeout,
-                stack_context.wrap(_on_timeout))
+                self.start_time + self.connect_timeout, _on_timeout)
 
         else:
             _on_connect = functools.partial(
@@ -642,9 +641,10 @@ class _HTTP2ConnectionContext(object):
         if self.is_closed:
             return
 
-        self.io_stream.read_bytes(
-            num_bytes=65535, callback=self._setup_reading,
-            streaming_callback=self._on_connection_streaming)
+        with stack_context.NullContext():
+            self.io_stream.read_bytes(
+                num_bytes=65535, callback=self._setup_reading,
+                streaming_callback=self._on_connection_streaming)
 
 
 class _HTTP2Stream(object):
