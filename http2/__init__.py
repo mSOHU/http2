@@ -2,7 +2,7 @@
 
 import sys
 
-__version__ = '0.2.2'
+__version__ = '0.2.3'
 
 
 # patch struct.unpack to accept memoryview object
