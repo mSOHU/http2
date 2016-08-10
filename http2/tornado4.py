@@ -65,6 +65,7 @@ class _RequestTimeout(Exception):
 
 class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
     MAX_CONNECTION_BACKOFF = 10
+    CONNECTION_BACKOFF_STEP = 1
     CLIENT_REGISTRY = {}
 
     def __new__(cls, *args, **kwargs):
@@ -99,13 +100,13 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             tcp_client=self.tcp_client, cert_options=cert_options,
         )
 
-        # back-off
-        self.connection_backoff = 0
-        self.next_connect_time = 0
-
         # open connection
         self.connection = None
         self.io_stream = None
+
+        # back-off
+        self.next_connect_time = 0
+        self.connection_backoff = self.CONNECTION_BACKOFF_STEP
 
         self.connection_factory.make_connection(
             self._on_connection_ready, self._on_connection_close)
@@ -130,12 +131,14 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             connection.on_connection_close(io_stream.error)
 
         # schedule back-off
-        self.connection_backoff = min(
-            self.connection_backoff + 1, self.MAX_CONNECTION_BACKOFF)
         now_time = time.time()
         self.next_connect_time = max(
             self.next_connect_time,
             now_time + self.connection_backoff)
+
+        self.connection_backoff = min(
+            self.connection_backoff + self.CONNECTION_BACKOFF_STEP,
+            self.MAX_CONNECTION_BACKOFF)
 
         if io_stream is None:
             logger.info(
@@ -163,8 +166,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             self.io_stream, 'Server requested, code: 0x%x' % event.error_code)
 
     def _on_connection_ready(self, io_stream):
-        # reset back-off
-        self.next_connect_time = max(time.time(), self.next_connect_time)
+        # reset back-off, prevent reconnect within back-off period
+        self.next_connect_time += self.connection_backoff
         self.connection_backoff = 0
 
         self.io_stream = io_stream
