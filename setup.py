@@ -35,7 +35,7 @@ setup(
         'http2': 'http2',
     },
     install_requires=[
-        'h2>=2.1.0',
+        'h2>=2.4.0',
         'tornado>=2.4.1',
         'backports.ssl_match_hostname',
     ],
