@@ -413,8 +413,11 @@ class _HTTP2ConnectionContext(object):
                     with stack_context.ExceptionStackContext(stream_delegate.handle_exception):
                         stream_delegate.handle_event(event)
                 else:
-                    self.reset_stream(stream_id)
-                    logger.warning('unexpected stream: %s, event: %r', stream_id, event)
+                    # FIXME: our nginx server will simply reset stream,
+                    # without increase the window size which consumed by
+                    # queued data frame which was belongs to the stream we're resetting
+                    # self.reset_stream(stream_id)
+                    logger.info('Unexpected stream: %s, event: %r', stream_id, event)
 
                 continue
 
@@ -729,8 +732,10 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         if hasattr(self, 'stream_id'):
             self.context.remove_stream_delegate(self.stream_id)
 
-            # TODO: should we reset & flush immediately?
-            self.context.reset_stream(self.stream_id, flush=True)
+            # FIXME: our nginx server will simply reset stream,
+            # without increase the window size which consumed by
+            # queued data frame which was belongs to the stream we're resetting
+            # self.context.reset_stream(self.stream_id, flush=True)
 
         error.__traceback__ = tb
         response = HTTP2Response(
