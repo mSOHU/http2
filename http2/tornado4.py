@@ -82,7 +82,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
     def initialize(self, io_loop, host, port=None, max_streams=200,
                    hostname_mapping=None, max_buffer_size=104857600,
                    resolver=None, defaults=None, secure=True,
-                   cert_options=None, enable_push=False, **conn_kwargs):
+                   cert_options=None, enable_push=False,
+                   initial_window_size=65535, **conn_kwargs):
         # initially, we disables stream multiplexing and wait the settings frame
         super(SimpleAsyncHTTP2Client, self).initialize(
             io_loop=io_loop, max_clients=1,
@@ -93,7 +94,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.host = host
         self.port = port
         self.secure = secure
-        self.enable_push = enable_push
+        self.enable_push = bool(enable_push)
+        self.initial_window_size = initial_window_size
         self.connection_factory = _HTTP2ConnectionFactory(
             io_loop=self.io_loop, host=host, port=port,
             max_buffer_size=self.max_buffer_size, secure=secure,
@@ -175,6 +177,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             io_stream=io_stream, secure=self.secure,
             enable_push=self.enable_push,
             max_buffer_size=self.max_buffer_size,
+            initial_window_size=self.initial_window_size,
         )
         self.connection.add_event_handler(
             h2.events.RemoteSettingsChanged, self._adjust_settings
@@ -288,10 +291,12 @@ class _HTTP2ConnectionFactory(object):
 class _HTTP2ConnectionContext(object):
     """maintenance a http/2 connection state on specific io_stream
     """
-    def __init__(self, io_stream, secure, enable_push, max_buffer_size):
+    def __init__(self, io_stream, secure, enable_push,
+                 max_buffer_size, initial_window_size):
         self.io_stream = io_stream
         self.schema = 'https' if secure else 'http'
-        self.enable_push = bool(enable_push)
+        self.enable_push = enable_push
+        self.initial_window_size = initial_window_size
         self.max_buffer_size = max_buffer_size
         self.is_closed = False
 
@@ -302,6 +307,7 @@ class _HTTP2ConnectionContext(object):
         self.h2_conn.initiate_connection()
         self.h2_conn.update_settings({
             h2.settings.ENABLE_PUSH: int(self.enable_push),
+            h2.settings.INITIAL_WINDOW_SIZE: self.initial_window_size,
         })
 
         self._setup_reading()
