@@ -82,7 +82,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
     def initialize(self, io_loop, host, port=None, max_streams=200,
                    hostname_mapping=None, max_buffer_size=104857600,
                    resolver=None, defaults=None, secure=True,
-                   cert_options=None, enable_push=False,
+                   cert_options=None, enable_push=False, connect_timeout=20,
                    initial_window_size=65535, **conn_kwargs):
         # initially, we disables stream multiplexing and wait the settings frame
         super(SimpleAsyncHTTP2Client, self).initialize(
@@ -90,16 +90,19 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             hostname_mapping=hostname_mapping, max_buffer_size=max_buffer_size,
             resolver=resolver, defaults=defaults, max_header_size=None,
         )
-        self.max_streams = max_streams
         self.host = host
         self.port = port
         self.secure = secure
+        self.max_streams = max_streams
         self.enable_push = bool(enable_push)
         self.initial_window_size = initial_window_size
+
+        self.connect_timeout = connect_timeout
         self.connection_factory = _HTTP2ConnectionFactory(
             io_loop=self.io_loop, host=host, port=port,
             max_buffer_size=self.max_buffer_size, secure=secure,
             tcp_client=self.tcp_client, cert_options=cert_options,
+            connect_timeout=self.connect_timeout,
         )
 
         # open connection
