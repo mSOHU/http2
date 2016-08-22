@@ -427,7 +427,7 @@ class _HTTP2ConnectionFactory(object):
 
     @classmethod
     def _handle_exception(cls, close_callback, typ, value, tb):
-        close_callback(None, value)
+        close_callback(io_stream=None, reason=value)
         return True
 
     @classmethod
