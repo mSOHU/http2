@@ -466,6 +466,7 @@ class _HTTP2ConnectionFactory(object):
                 close_callback=close_callback,
             )
 
+        logger.info('Establishing HTTP/2 connection to %s:%s...', self.host, self.port)
         with stack_context.ExceptionStackContext(
                 functools.partial(self._handle_exception, close_callback)):
 
