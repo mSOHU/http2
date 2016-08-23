@@ -167,8 +167,82 @@ class GzipDecompressor(object):
         return self.decompressobj.flush()
 
 
-class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
+class SimpleAsyncHTTPClientWithTimeout(simple_httpclient.SimpleAsyncHTTPClient):
+    def initialize(self, *args, **kwargs):
+        super(SimpleAsyncHTTPClientWithTimeout, self).initialize(*args, **kwargs)
+
+        # all pending requests
+        self.waiting = {}
+
+    def fetch(self, request, callback, **kwargs):
+        if not isinstance(request, HTTPRequest):
+            request = HTTPRequest(url=request, **kwargs)
+        # We're going to modify this (to add Host, Accept-Encoding, etc),
+        # so make sure we don't modify the caller's object.  This is also
+        # where normal dicts get converted to HTTPHeaders objects.
+        request.headers = httputil.HTTPHeaders(request.headers)
+        callback = stack_context.wrap(callback)
+
+        key = object()
+        self.queue.append((key, request, callback))
+
+        if not len(self.active) < self.max_clients:
+            timeout_handle = self.io_loop.add_timeout(
+                time.time() + min(request.connect_timeout,
+                                  request.request_timeout),
+                functools.partial(self._on_timeout, key))
+        else:
+            timeout_handle = None
+
+        self.waiting[key] = (request, callback, timeout_handle)
+        self._process_queue()
+        if self.queue:
+            logging.debug(
+                'max_clients limit reached, request queued. '
+                '%d active, %d queued requests.' % (
+                    len(self.active), len(self.queue))
+            )
+
+    def _remove_timeout(self, key):
+        if key in self.waiting:
+            request, callback, timeout_handle = self.waiting[key]
+            if timeout_handle is not None:
+                self.io_loop.remove_timeout(timeout_handle)
+            del self.waiting[key]
+
+    def _on_timeout(self, key):
+        request, callback, timeout_handle = self.waiting[key]
+        self.queue.remove((key, request, callback))
+        timeout_response = HTTPResponse(
+            request, 599, error=HTTPError(599, "Timeout"),
+            request_time=time.time() - request.start_time)
+        self.io_loop.add_callback(callback, timeout_response)
+        del self.waiting[key]
+
+    def _process_queue(self):
+        with stack_context.NullContext():
+            while self.queue and len(self.active) < self.max_clients:
+                key, request, callback = self.queue.popleft()
+                if key not in self.waiting:
+                    continue
+                self._remove_timeout(key)
+                self.active[key] = (request, callback)
+                release_callback = functools.partial(self._release_fetch, key)
+                self._handle_request(request, release_callback, callback)
+
+    def _handle_request(self, request, release_callback, callback):
+        simple_httpclient._HTTPConnection(
+            self.io_loop, self, request, release_callback,
+            callback, self.max_buffer_size)
+
+    @classmethod
+    def setup_default(cls):
+        simple_httpclient.AsyncHTTPClient.configure(cls)
+
+
+class SimpleAsyncHTTP2Client(SimpleAsyncHTTPClientWithTimeout):
     MAX_CONNECTION_BACKOFF = 10
+    CONNECTION_BACKOFF_STEP = 1
     CLIENT_REGISTRY = {}
 
     def __new__(cls, *args, **kwargs):
@@ -185,30 +259,34 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
     def initialize(self, io_loop, host, port=None, max_streams=200,
                    hostname_mapping=None, max_buffer_size=104857600,
                    resolver=None, defaults=None, secure=True,
-                   cert_options=None, enable_push=False, **conn_kwargs):
+                   cert_options=None, enable_push=False, connect_timeout=20,
+                   initial_window_size=65535, **conn_kwargs):
         # initially, we disables stream multiplexing and wait the settings frame
         super(SimpleAsyncHTTP2Client, self).initialize(
             io_loop=io_loop, max_clients=1,
             hostname_mapping=hostname_mapping, max_buffer_size=max_buffer_size,
         )
-        self.max_streams = max_streams
         self.host = host
         self.port = port
         self.secure = secure
-        self.enable_push = enable_push
+        self.max_streams = max_streams
+        self.enable_push = bool(enable_push)
+        self.initial_window_size = initial_window_size
+
+        self.connect_timeout = connect_timeout
         self.connection_factory = _HTTP2ConnectionFactory(
             io_loop=self.io_loop, host=host, port=port,
             max_buffer_size=self.max_buffer_size, secure=secure,
-            cert_options=cert_options,
+            cert_options=cert_options, connect_timeout=self.connect_timeout
         )
-
-        # back-off
-        self.connection_backoff = 0
-        self.next_connect_time = 0
 
         # open connection
         self.connection = None
         self.io_stream = None
+
+        # back-off
+        self.next_connect_time = 0
+        self.connection_backoff = self.CONNECTION_BACKOFF_STEP
 
         self.connection_factory.make_connection(
             self._on_connection_ready, self._on_connection_close)
@@ -233,12 +311,14 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             connection.on_connection_close(io_stream.error)
 
         # schedule back-off
-        self.connection_backoff = min(
-            self.connection_backoff + 1, self.MAX_CONNECTION_BACKOFF)
         now_time = time.time()
         self.next_connect_time = max(
             self.next_connect_time,
             now_time + self.connection_backoff)
+
+        self.connection_backoff = min(
+            self.connection_backoff + self.CONNECTION_BACKOFF_STEP,
+            self.MAX_CONNECTION_BACKOFF)
 
         if io_stream is None:
             logger.info(
@@ -266,8 +346,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             self.io_stream, 'Server requested, code: 0x%x' % event.error_code)
 
     def _on_connection_ready(self, io_stream):
-        # reset back-off
-        self.next_connect_time = max(time.time(), self.next_connect_time)
+        # reset back-off, prevent reconnect within back-off period
+        self.next_connect_time += self.connection_backoff
         self.connection_backoff = 0
 
         self.io_stream = io_stream
@@ -275,6 +355,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             io_stream=io_stream, secure=self.secure,
             enable_push=self.enable_push,
             max_buffer_size=self.max_buffer_size,
+            initial_window_size=self.initial_window_size,
         )
         self.connection.add_event_handler(
             h2.events.RemoteSettingsChanged, self._adjust_settings
@@ -288,16 +369,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         if not self.connection:
             return
 
-        with stack_context.NullContext():
-            while self.queue and len(self.active) < self.max_clients:
-                request, callback = self.queue.popleft()
-                key = object()
-                self.active[key] = (request, callback)
-                self._handle_request(
-                    request=request,
-                    release_callback=functools.partial(self._release_fetch, key),
-                    final_callback=callback,
-                )
+        super(SimpleAsyncHTTP2Client, self)._process_queue()
 
     def _handle_request(self, request, release_callback, final_callback):
         _HTTP2Stream(
@@ -353,7 +425,6 @@ class _SSLIOStream(iostream.SSLIOStream):
 class _HTTP2ConnectionFactory(object):
     def __init__(self, io_loop, host, port, max_buffer_size,
                  secure=True, cert_options=None, connect_timeout=None):
-        self.start_time = time.time()
         self.io_loop = io_loop
         self.max_buffer_size = max_buffer_size
         self.cert_options = collections.defaultdict(lambda: None, **cert_options or {})
@@ -386,7 +457,7 @@ class _HTTP2ConnectionFactory(object):
                 self._on_connect(_stream, ready_callback, close_callback)
 
             timeout_handle = self.io_loop.add_timeout(
-                self.start_time + self.connect_timeout, _on_timeout)
+                start_time + self.connect_timeout, _on_timeout)
 
         else:
             _on_connect = functools.partial(
@@ -395,6 +466,7 @@ class _HTTP2ConnectionFactory(object):
                 close_callback=close_callback,
             )
 
+        logger.info('Establishing HTTP/2 connection to %s:%s...', self.host, self.port)
         with stack_context.ExceptionStackContext(
                 functools.partial(self._handle_exception, close_callback)):
 
@@ -421,7 +493,7 @@ class _HTTP2ConnectionFactory(object):
 
     @classmethod
     def _handle_exception(cls, close_callback, typ, value, tb):
-        close_callback(None, value)
+        close_callback(io_stream=None, reason=value)
         return True
 
     @classmethod
@@ -485,20 +557,24 @@ class _HTTP2ConnectionFactory(object):
 class _HTTP2ConnectionContext(object):
     """maintenance a http/2 connection state on specific io_stream
     """
-    def __init__(self, io_stream, secure, enable_push, max_buffer_size):
+    def __init__(self, io_stream, secure, enable_push,
+                 max_buffer_size, initial_window_size):
         self.io_stream = io_stream
         self.schema = 'https' if secure else 'http'
-        self.enable_push = bool(enable_push)
+        self.enable_push = enable_push
+        self.initial_window_size = initial_window_size
         self.max_buffer_size = max_buffer_size
         self.is_closed = False
 
         # h2 contexts
         self.stream_delegates = {}
         self.event_handlers = {}  # connection level event, event -> handler
+        self.reset_stream_ids = collections.deque(maxlen=50)
         self.h2_conn = h2.connection.H2Connection(client_side=True)
         self.h2_conn.initiate_connection()
         self.h2_conn.update_settings({
             h2.settings.ENABLE_PUSH: int(self.enable_push),
+            h2.settings.INITIAL_WINDOW_SIZE: self.initial_window_size,
         })
 
         self._setup_reading()
@@ -604,8 +680,15 @@ class _HTTP2ConnectionContext(object):
                     with stack_context.ExceptionStackContext(stream_delegate.handle_exception):
                         stream_delegate.handle_event(event)
                 else:
-                    self.reset_stream(stream_id)
-                    logger.warning('unexpected stream: %s, event: %r', stream_id, event)
+                    # FIXME: our nginx server will simply reset stream,
+                    # without increase the window size which consumed by
+                    # queued data frame which was belongs to the stream we're resetting
+                    # self.reset_stream(stream_id)
+                    if stream_id in self.reset_stream_ids:
+                        if isinstance(event, h2.events.StreamEnded):
+                            self.reset_stream_ids.remove(stream_id)
+                    else:
+                        logger.warning('Unexpected stream: %s, event: %r', stream_id, event)
 
                 continue
 
@@ -675,8 +758,7 @@ class _HTTP2Stream(object):
         with stack_context.ExceptionStackContext(self.handle_exception):
             if request.request_timeout:
                 self._timeout = self.io_loop.add_timeout(
-                    self.start_time + request.request_timeout,
-                    stack_context.wrap(self._on_timeout))
+                    self.start_time + request.request_timeout, self._on_timeout)
 
             if stream_id is None:
                 self.request = self.prepare_request(request, default_host)
@@ -922,8 +1004,11 @@ class _HTTP2Stream(object):
         if hasattr(self, 'stream_id'):
             self.context.remove_stream_delegate(self.stream_id)
 
-            # TODO: should we reset & flush immediately?
-            self.context.reset_stream(self.stream_id, flush=True)
+            # FIXME: our nginx server will simply reset stream,
+            # without increase the window size which consumed by
+            # queued data frame which was belongs to the stream we're resetting
+            # self.context.reset_stream(self.stream_id, flush=True)
+            self.context.reset_stream_ids.append(self.stream_id)
 
         response = HTTP2Response(
             self.request, 599, error=error,
