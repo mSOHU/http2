@@ -167,7 +167,80 @@ class GzipDecompressor(object):
         return self.decompressobj.flush()
 
 
-class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
+class SimpleAsyncHTTPClientWithTimeout(simple_httpclient.SimpleAsyncHTTPClient):
+    def initialize(self, *args, **kwargs):
+        super(SimpleAsyncHTTPClientWithTimeout, self).initialize(*args, **kwargs)
+
+        # all pending requests
+        self.waiting = {}
+
+    def fetch(self, request, callback, **kwargs):
+        if not isinstance(request, HTTPRequest):
+            request = HTTPRequest(url=request, **kwargs)
+        # We're going to modify this (to add Host, Accept-Encoding, etc),
+        # so make sure we don't modify the caller's object.  This is also
+        # where normal dicts get converted to HTTPHeaders objects.
+        request.headers = httputil.HTTPHeaders(request.headers)
+        callback = stack_context.wrap(callback)
+
+        key = object()
+        self.queue.append((key, request, callback))
+
+        if not len(self.active) < self.max_clients:
+            timeout_handle = self.io_loop.add_timeout(
+                self.io_loop.time() + min(request.connect_timeout,
+                                          request.request_timeout),
+                functools.partial(self._on_timeout, key))
+        else:
+            timeout_handle = None
+
+        self.waiting[key] = (request, callback, timeout_handle)
+        self._process_queue()
+        if self.queue:
+            logging.debug(
+                'max_clients limit reached, request queued. '
+                '%d active, %d queued requests.' % (
+                    len(self.active), len(self.queue))
+            )
+
+    def _remove_timeout(self, key):
+        if key in self.waiting:
+            request, callback, timeout_handle = self.waiting[key]
+            if timeout_handle is not None:
+                self.io_loop.remove_timeout(timeout_handle)
+            del self.waiting[key]
+
+    def _on_timeout(self, key):
+        request, callback, timeout_handle = self.waiting[key]
+        self.queue.remove((key, request, callback))
+        timeout_response = HTTPResponse(
+            request, 599, error=HTTPError(599, "Timeout"),
+            request_time=self.io_loop.time() - request.start_time)
+        self.io_loop.add_callback(callback, timeout_response)
+        del self.waiting[key]
+
+    def _process_queue(self):
+        with stack_context.NullContext():
+            while self.queue and len(self.active) < self.max_clients:
+                key, request, callback = self.queue.popleft()
+                if key not in self.waiting:
+                    continue
+                self._remove_timeout(key)
+                self.active[key] = (request, callback)
+                release_callback = functools.partial(self._release_fetch, key)
+                self._handle_request(request, release_callback, callback)
+
+    def _handle_request(self, request, release_callback, callback):
+        simple_httpclient._HTTPConnection(
+            self.io_loop, self, request, release_callback,
+            callback, self.max_buffer_size)
+
+    @classmethod
+    def setup_default(cls):
+        simple_httpclient.AsyncHTTPClient.configure(cls)
+
+
+class SimpleAsyncHTTP2Client(SimpleAsyncHTTPClientWithTimeout):
     MAX_CONNECTION_BACKOFF = 10
     CONNECTION_BACKOFF_STEP = 1
     CLIENT_REGISTRY = {}
@@ -296,16 +369,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         if not self.connection:
             return
 
-        with stack_context.NullContext():
-            while self.queue and len(self.active) < self.max_clients:
-                request, callback = self.queue.popleft()
-                key = object()
-                self.active[key] = (request, callback)
-                self._handle_request(
-                    request=request,
-                    release_callback=functools.partial(self._release_fetch, key),
-                    final_callback=callback,
-                )
+        super(SimpleAsyncHTTP2Client, self)._process_queue()
 
     def _handle_request(self, request, release_callback, final_callback):
         _HTTP2Stream(
