@@ -206,7 +206,6 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 class _HTTP2ConnectionFactory(object):
     def __init__(self, io_loop, host, port, max_buffer_size, tcp_client,
                  secure=True, cert_options=None, connect_timeout=None):
-        self.start_time = time.time()
         self.io_loop = io_loop
         self.max_buffer_size = max_buffer_size
         self.tcp_client = tcp_client
@@ -239,8 +238,7 @@ class _HTTP2ConnectionFactory(object):
                 self._on_connect(io_stream, ready_callback, close_callback)
 
             timeout_handle = self.io_loop.add_timeout(
-                self.start_time + self.connect_timeout,
-                stack_context.wrap(_on_timeout))
+                start_time + self.connect_timeout, _on_timeout)
 
         else:
             _on_connect = functools.partial(
