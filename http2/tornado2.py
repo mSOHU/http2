@@ -757,8 +757,7 @@ class _HTTP2Stream(object):
         with stack_context.ExceptionStackContext(self.handle_exception):
             if request.request_timeout:
                 self._timeout = self.io_loop.add_timeout(
-                    self.start_time + request.request_timeout,
-                    stack_context.wrap(self._on_timeout))
+                    self.start_time + request.request_timeout, self._on_timeout)
 
             if stream_id is None:
                 self.request = self.prepare_request(request, default_host)
