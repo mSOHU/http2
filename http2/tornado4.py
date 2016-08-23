@@ -4,7 +4,6 @@ import io
 import ssl
 import sys
 import copy
-import time
 import base64
 import socket
 import httplib
@@ -136,7 +135,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             connection.on_connection_close(io_stream.error)
 
         # schedule back-off
-        now_time = time.time()
+        now_time = self.io_loop.time()
         self.next_connect_time = max(
             self.next_connect_time,
             now_time + self.connection_backoff)
@@ -221,13 +220,13 @@ class _HTTP2ConnectionFactory(object):
     def make_connection(self, ready_callback, close_callback):
         if self.connect_timeout:
             timed_out = [False]
-            start_time = time.time()
+            start_time = self.io_loop.time()
 
             def _on_timeout():
                 timed_out[0] = True
                 close_callback(
                     io_stream=None,
-                    reason=HTTP2ConnectionTimeout(time.time() - start_time)
+                    reason=HTTP2ConnectionTimeout(self.io_loop.time() - start_time)
                 )
 
             def _on_connect(io_stream):
@@ -471,8 +470,8 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
     def __init__(
             self, io_loop, context, request, default_host=None,
             release_callback=None, final_callback=None, stream_id=None):
-        self.start_time = time.time()
         self.io_loop = io_loop
+        self.start_time = self.io_loop.time()
         self.context = context
         self.release_callback = release_callback
         self.final_callback = final_callback
@@ -703,7 +702,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             buff = io.BytesIO(data)  # TODO: don't require one big string?
         response = HTTP2Response(
             original_request, self.code, reason=self.reason,
-            headers=self.headers, request_time=time.time() - self.start_time,
+            headers=self.headers, request_time=self.io_loop.time() - self.start_time,
             buffer=buff, effective_url=self.request.url,
             pushed_responses=self._pushed_responses.values(),
             new_request=new_request,
@@ -747,7 +746,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         error.__traceback__ = tb
         response = HTTP2Response(
             self.request, 599, error=error,
-            request_time=time.time() - self.start_time,
+            request_time=self.io_loop.time() - self.start_time,
         )
         self._run_callback(response)
         return True
