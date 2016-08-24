@@ -216,7 +216,7 @@ class SimpleAsyncHTTPClientWithTimeout(simple_httpclient.SimpleAsyncHTTPClient):
         timeout_response = HTTPResponse(
             request, 599, error=HTTPError(599, "Timeout"),
             request_time=time.time() - request.start_time)
-        self.io_loop.add_callback(callback, timeout_response)
+        self.io_loop.add_callback(functools.partial(callback, timeout_response))
         del self.waiting[key]
 
     def _process_queue(self):
