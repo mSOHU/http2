@@ -267,6 +267,8 @@ class SimpleAsyncHTTP2Client(SimpleAsyncHTTPClientWithTimeout):
             hostname_mapping=hostname_mapping, max_buffer_size=max_buffer_size,
         )
         self.host = host
+        if port is None:
+            port = 443 if secure else 80
         self.port = port
         self.secure = secure
         self.max_streams = max_streams
@@ -428,9 +430,6 @@ class _HTTP2ConnectionFactory(object):
         self.io_loop = io_loop
         self.max_buffer_size = max_buffer_size
         self.cert_options = collections.defaultdict(lambda: None, **cert_options or {})
-        if port is None:
-            port = 443 if secure else 80
-
         self.host = host
         self.port = port
         self.secure = secure
