@@ -6,6 +6,7 @@ copied from https://github.com/bdarnell/tornado_http2/blob/master/tornado_http2/
 """
 
 import time
+import logging
 
 from tornado.ioloop import IOLoop
 from tornado.options import define, options, parse_command_line, enable_pretty_logging
@@ -14,6 +15,7 @@ from tornado.options import define, options, parse_command_line, enable_pretty_l
 from http2 import SimpleAsyncHTTP2Client
 
 
+logging.getLogger('http2').setLevel(logging.INFO)
 enable_pretty_logging()
 
 define('n', help='number of queries', default=1000)

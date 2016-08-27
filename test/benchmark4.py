@@ -6,6 +6,7 @@ copied from https://github.com/bdarnell/tornado_http2/blob/master/tornado_http2/
 """
 
 import time
+import logging
 
 from tornado import gen, log
 from tornado.ioloop import IOLoop
@@ -16,6 +17,7 @@ from http2 import SimpleAsyncHTTP2Client
 
 
 log.enable_pretty_logging()
+log.gen_log.setLevel(logging.INFO)
 
 define('n', help='number of queries', default=1000)
 define('h', help='host', default='http2.akamai.com')
