@@ -90,6 +90,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             resolver=resolver, defaults=defaults, max_header_size=None,
         )
         self.host = host
+        if port is None:
+            port = 443 if secure else 80
         self.port = port
         self.secure = secure
         self.max_streams = max_streams
@@ -209,9 +211,6 @@ class _HTTP2ConnectionFactory(object):
         self.max_buffer_size = max_buffer_size
         self.tcp_client = tcp_client
         self.cert_options = collections.defaultdict(lambda: None, **cert_options or {})
-        if port is None:
-            port = 443 if secure else 80
-
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
@@ -636,7 +635,9 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
 
         if self.release_callback is not None:
             self.release_callback()
-        self.io_loop.add_callback(functools.partial(self.final_callback, response))
+
+        with stack_context.NullContext():
+            self.io_loop.add_callback(functools.partial(self.final_callback, response))
         self._finalized = True
 
     def handle_event(self, event):

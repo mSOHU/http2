@@ -216,7 +216,7 @@ class SimpleAsyncHTTPClientWithTimeout(simple_httpclient.SimpleAsyncHTTPClient):
         timeout_response = HTTPResponse(
             request, 599, error=HTTPError(599, "Timeout"),
             request_time=time.time() - request.start_time)
-        self.io_loop.add_callback(callback, timeout_response)
+        self.io_loop.add_callback(functools.partial(callback, timeout_response))
         del self.waiting[key]
 
     def _process_queue(self):
@@ -267,6 +267,8 @@ class SimpleAsyncHTTP2Client(SimpleAsyncHTTPClientWithTimeout):
             hostname_mapping=hostname_mapping, max_buffer_size=max_buffer_size,
         )
         self.host = host
+        if port is None:
+            port = 443 if secure else 80
         self.port = port
         self.secure = secure
         self.max_streams = max_streams
@@ -428,9 +430,6 @@ class _HTTP2ConnectionFactory(object):
         self.io_loop = io_loop
         self.max_buffer_size = max_buffer_size
         self.cert_options = collections.defaultdict(lambda: None, **cert_options or {})
-        if port is None:
-            port = 443 if secure else 80
-
         self.host = host
         self.port = port
         self.secure = secure
@@ -900,7 +899,9 @@ class _HTTP2Stream(object):
 
         if self.release_callback is not None:
             self.release_callback()
-        self.io_loop.add_callback(functools.partial(self.final_callback, response))
+
+        with stack_context.NullContext():
+            self.io_loop.add_callback(functools.partial(self.final_callback, response))
         self._finalized = True
 
     def handle_event(self, event):
