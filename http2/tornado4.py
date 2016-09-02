@@ -9,6 +9,7 @@ import socket
 import httplib
 import urlparse
 import functools
+import contextlib
 import collections
 
 import h2.errors
@@ -102,8 +103,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.connection_factory = _HTTP2ConnectionFactory(
             io_loop=self.io_loop, host=host, port=port,
             max_buffer_size=self.max_buffer_size, secure=secure,
-            tcp_client=self.tcp_client, cert_options=cert_options,
-            connect_timeout=self.connect_timeout,
+            cert_options=cert_options, connect_timeout=self.connect_timeout,
+            tcp_client=self.tcp_client,
         )
 
         # open connection
@@ -191,6 +192,10 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         )
         self._process_queue()
 
+    def fetch_impl(self, request, callback):
+        request = _HTTP2Stream.prepare_request(request, self.host)
+        super(SimpleAsyncHTTP2Client, self).fetch_impl(request, callback)
+
     def _process_queue(self):
         if not self.connection:
             return
@@ -198,10 +203,14 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         super(SimpleAsyncHTTP2Client, self)._process_queue()
 
     def _handle_request(self, request, release_callback, final_callback):
-        _HTTP2Stream(
-            self.io_loop, self.connection, request,
-            self.host, release_callback, final_callback
-        )
+        with self.connection.handle_exception():
+            stream_id = self.connection.send_request(request)
+            _HTTP2Stream(
+                io_loop=self.io_loop, context=self.connection,
+                request=request, stream_id=stream_id,
+                release_callback=release_callback,
+                final_callback=final_callback,
+            )
 
 
 class _HTTP2ConnectionFactory(object):
@@ -322,32 +331,29 @@ class _HTTP2ConnectionContext(object):
         for delegate in self.stream_delegates.values():
             delegate.on_connection_close(reason)
 
+    @contextlib.contextmanager
+    def handle_exception(self):
+        try:
+            yield
+        except Exception as err:
+            exc_info = sys.exc_info()
+            logger.error('Unexpected exception: %r', err, exc_info=exc_info)
+            try:
+                self.io_stream.close(exc_info)
+            finally:
+                self.on_connection_close(err)
+
     # h2 related
     def _on_connection_streaming(self, data):
         """handles streaming data"""
         if self.is_closed:
             return
 
-        try:
+        with self.handle_exception():
             events = self.h2_conn.receive_data(data)
-        except Exception as err:
-            try:
-                if isinstance(err, h2.exceptions.ProtocolError):
-                    self._flush_to_stream()
-                self.io_stream.close()
-            finally:
-                self.on_connection_close(err)
-            return
-
-        if events:
-            try:
+            if events:
                 self._process_events(events)
                 self._flush_to_stream()
-            except Exception as err:
-                try:
-                    self.io_stream.close()
-                finally:
-                    self.on_connection_close(err)
 
     def _flush_to_stream(self):
         """flush h2 connection data to IOStream"""
@@ -355,7 +361,7 @@ class _HTTP2ConnectionContext(object):
         if data_to_send:
             self.io_stream.write(data_to_send)
 
-    def handle_request(self, request):
+    def send_request(self, request):
         http2_headers = [
             (':authority', request.headers.pop('Host')),
             (':path', request.url),
@@ -371,7 +377,7 @@ class _HTTP2ConnectionContext(object):
         self._flush_to_stream()
         return stream_id
 
-    def add_stream_delegate(self, stream_id, stream_delegate):
+    def set_stream_delegate(self, stream_id, stream_delegate):
         self.stream_delegates[stream_id] = stream_delegate
 
     def remove_stream_delegate(self, stream_id):
@@ -468,8 +474,8 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
     _SUPPORTED_METHODS = set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 
     def __init__(
-            self, io_loop, context, request, default_host=None,
-            release_callback=None, final_callback=None, stream_id=None):
+            self, io_loop, context, request, stream_id,
+            release_callback=None, final_callback=None):
         self.io_loop = io_loop
         self.start_time = self.io_loop.time()
         self.context = context
@@ -488,20 +494,14 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._finalized = False
         self._decompressor = None
 
+        self.stream_id = stream_id
         self.request = request
-        with stack_context.ExceptionStackContext(self.handle_exception):
-            if request.request_timeout:
+        self.context.set_stream_delegate(self.stream_id, self)
+
+        if request.request_timeout:
+            with stack_context.ExceptionStackContext(self.handle_exception):
                 self._timeout = self.io_loop.add_timeout(
                     self.start_time + request.request_timeout, self._on_timeout)
-
-            if stream_id is None:
-                self.request = self.prepare_request(request, default_host)
-                self.stream_id = self.context.handle_request(self.request)
-            else:
-                self.request = request
-                self.stream_id = stream_id
-
-            self.context.add_stream_delegate(self.stream_id, self)
 
     @classmethod
     def build_http_headers(cls, headers):
