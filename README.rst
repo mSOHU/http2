@@ -16,6 +16,8 @@ Features
 - stream concurrency negotiating
 - SNI supporting in tornado2
 - gzip supporting
+- flow control support
+- DON't reset stream for nginx
 
 
 Non-features
@@ -34,14 +36,13 @@ WIP
 - close client connection
 - pushed streams as future
 - healthy check
-- flow window manager
 - support HTTPRequest.body_producer
 
 
 Dependencies
 ------------
 
-- h2>=2.1.0
+- h2>=2.4.0
 - tornado>=4.0 or tornado==2.4.1
 - CPython>=2.7.10 (not required for h2c, as secure=False)
 - certifi for tornado==2.4.1
